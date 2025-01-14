@@ -43,6 +43,10 @@ rust_socketio = {version = "0.6.0", features = ["async"] }
 futures-util = "0.3.31"
 regex = "1"
 quickxml_to_serde = {version ="0.6.0", features = ["json_types", "regex_path"] }
+actix-web = "4"
+actix-files = "0.6"
+actix-multipart = "0.6"
+futures = "0.3"
 
 [features]
 # this feature is used for production builds or when `devPath` points to the filesystem

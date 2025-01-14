@@ -19,12 +19,16 @@ use winapi::{
         winuser::{FindWindowA, SetForegroundWindow, ShowWindow, SW_RESTORE},
     },
 };
+use tokio::sync::oneshot;
 
 mod endpoints;
 mod wcferry;
 mod service;
 mod wechat_config;
 mod handler;
+mod file_server;
+
+use file_server::FileServer;
 
 struct FrontendLogger {
     app_handle: tauri::AppHandle,
@@ -52,9 +56,11 @@ impl Log for FrontendLogger {
 
 struct AppState {
     http_server_running: bool,
+    http_server_handle: Option<oneshot::Sender<()>>,
+    file_server_handle: Option<oneshot::Sender<()>>,
 }
 
-#[tauri::command]
+#[command]
 async fn ip() -> Result<String, String> {
     let global = GLOBAL.get().unwrap();
     let wechat_config = global.wechat_config.read().unwrap();
@@ -62,7 +68,7 @@ async fn ip() -> Result<String, String> {
     Ok(String::from(local.to_string()+ ":" + &wechat_config.http_server_port.to_string()))
 }
 
-#[tauri::command]
+#[command]
 async fn is_http_server_running(
     state: tauri::State<'_, Arc<Mutex<AppState>>>,
 ) -> Result<bool, String> {
@@ -70,10 +76,9 @@ async fn is_http_server_running(
     Ok(app_state.http_server_running)
 }
 
-
-// 写入配置到文件中
 #[command]
-fn save_wechat_config(
+// 写入配置到文件中
+async fn save_wechat_config(
     config: WechatConfig,
 ) -> Result<bool, String> {
     // 定义文件路径
@@ -95,12 +100,9 @@ fn save_wechat_config(
     Ok(true)
 }
 
-
-// 读取文件
 #[command]
-fn read_wechat_config() -> Result<WechatConfig, String> {
-    // 获取应用安装目录的路径
-    // let install_dir = resolve_path(&app, ".", None).map_err(|e| e.to_string())?;
+// 读取文件
+async fn read_wechat_config() -> Result<WechatConfig, String> {
     // 定义文件路径
     let file_path = ".\\config.json5";
 
@@ -120,11 +122,24 @@ async fn start_server(
     {
         let mut app_state = state.inner().lock().unwrap();
         if !app_state.http_server_running {
-          // 发送到消息监听器中
-          let global = GLOBAL.get().unwrap();
-          let event_bus = global.startup_event_bus.lock().unwrap();
-          let _ = event_bus.send_message(Event::StartUp());
-          app_state.http_server_running = true;
+            // 发送到消息监听器中
+            let global = GLOBAL.get().unwrap();
+            let event_bus = global.startup_event_bus.lock().unwrap();
+            let _ = event_bus.send_message(Event::StartUp());
+            app_state.http_server_running = true;
+
+            // 启动文件服务器
+            if app_state.file_server_handle.is_none() {
+                let (file_tx, file_rx) = oneshot::channel();
+                app_state.file_server_handle = Some(file_tx);
+                let file_server = FileServer::new("storage", &_host, _port + 1);
+                tokio::spawn(async move {
+                    tokio::select! {
+                        _ = file_server.start(_port + 1) => {},
+                        _ = file_rx => {},
+                    }
+                });
+            }
         }
     }
     Ok(())
@@ -139,25 +154,26 @@ async fn stop_server(state: tauri::State<'_, Arc<Mutex<AppState>>>) -> Result<()
             let event_bus = global.startup_event_bus.lock().unwrap();
             let _ = event_bus.send_message(Event::Shutdown());
             app_state.http_server_running = false;
+
+            // 停止文件服务器
+            if let Some(tx) = app_state.file_server_handle.take() {
+                let _ = tx.send(());
+            }
         } else {
             info!("服务已停止");
         }
-
-        
     }
 
     info!("服务停止");
     Ok(())
 }
 
-#[command]
 async fn confirm_exit(app_handle: tauri::AppHandle) {
     let _ = stop_server(app_handle.state()).await;
     std::process::exit(0);
 }
 
-
-
+#[cfg(target_os = "windows")]
 fn handle_system_tray_event(app_handle: &tauri::AppHandle, event: tauri::SystemTrayEvent) {
     match event {
         tauri::SystemTrayEvent::MenuItemClick { id, .. } => match id.as_str() {
@@ -227,6 +243,8 @@ async fn main() {
         .on_system_tray_event(handle_system_tray_event)
         .manage(Arc::new(Mutex::new(AppState {
             http_server_running: false,
+            http_server_handle: None,
+            file_server_handle: None,
         })))
         .invoke_handler(tauri::generate_handler![
             start_server,

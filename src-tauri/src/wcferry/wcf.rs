@@ -137,7 +137,7 @@ pub struct WxMsg {
     #[prost(uint32, tag = "4")]
     #[serde(rename = "type")]
     pub r#type: u32,
-    /// 消息类型
+    /// 消息时间戳
     #[prost(uint32, tag = "5")]
     pub ts: u32,
     /// 群 id（如果是群消息的话）
@@ -161,6 +161,18 @@ pub struct WxMsg {
     /// 消息 xml
     #[prost(string, tag = "12")]
     pub xml: ::prost::alloc::string::String,
+    /// 文件URL
+    #[prost(string, tag = "13")]
+    pub file_url: ::prost::alloc::string::String,
+    /// 缩略图URL
+    #[prost(string, tag = "14")]
+    pub thumb_url: ::prost::alloc::string::String,
+    /// 文件名
+    #[prost(string, tag = "15")]
+    pub file_name: ::prost::alloc::string::String,
+    /// 文件大小
+    #[prost(uint64, tag = "16")]
+    pub file_size: u64,
 }
 #[derive(serde::Serialize, serde::Deserialize, utoipa::ToSchema)]
 #[allow(clippy::derive_partial_eq_without_eq)]
